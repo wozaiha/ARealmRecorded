@@ -8,10 +8,12 @@ using System.Text.RegularExpressions;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Hooking;
 using Dalamud.Logging;
+using Dalamud.Memory;
 using Dalamud.Utility.Signatures;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
+using Lumina.Excel.GeneratedSheets;
 
 namespace ARealmRecorded;
 
@@ -253,6 +255,82 @@ public unsafe class Game
     [Signature("40 55 53 57 41 55 41 57 48 8D 6C 24 C9")]
     private static Hook<EventBeginDelegate> EventBeginHook;
     private static IntPtr EventBeginDetour(IntPtr a1, IntPtr a2) => !InPlayback || ConfigModule.Instance()->GetIntValue(ConfigOption.CutsceneSkipIsContents) == 0 ? EventBeginHook.Original(a1, a2) : IntPtr.Zero;
+
+    private const int RsvSize = 1080;
+    private const ushort RsvOpcde = 0xF001;
+    private static List<byte[]> RsvBuffer = new();
+    public unsafe delegate long RsvReceiveDelegate(IntPtr a1);
+    [Signature("44 8B 09 4C 8D 41 34",DetourName = nameof(RsvReceiveDetour))]
+    private static Hook<RsvReceiveDelegate> RsvReceiveHook;
+    private static long RsvReceiveDetour(IntPtr a1) {
+        PluginLog.Debug("Received a RSV packet");
+        RsvBuffer.Add(MemoryHelper.ReadRaw(a1, RsvSize));
+        if (IsRecording) {
+            foreach (var rsv in RsvBuffer)
+            {
+                PluginLog.Log("Recording RSV ...");
+                RecordPacketHook.Original(ffxivReplay,0xE000_0000, RsvOpcde, a1,RsvSize);
+            }
+            RsvBuffer.Clear();
+        }
+        var ret = RsvReceiveHook.Original(a1);
+        PluginLog.Debug($"RET = {ret},Num of received:{RsvBuffer.Count}");
+        return ret;
+    }
+
+    private const int RsfSize = 0x48;
+    private const ushort RsfOpcde = 0xF002;
+    private static List<byte[]> RsfBuffer = new();
+    public unsafe delegate long RsfReceiveDelegate(IntPtr a1);
+    [Signature("48 8B 11 4C 8D 41 08", DetourName = nameof(RsfReceiveDetour))]
+    private static Hook<RsfReceiveDelegate> RsfReceiveHook;
+    private static long RsfReceiveDetour(IntPtr a1)
+    {
+        PluginLog.Debug("Received a RSF packet");
+        RsfBuffer.Add(MemoryHelper.ReadRaw(a1, RsfSize));
+        if (IsRecording) {
+            foreach (var rsv in RsfBuffer) {
+                PluginLog.Log("Recording RSF ...");
+                RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, a1, RsfSize);
+            }
+            RsfBuffer.Clear();
+        }
+        var ret = RsfReceiveHook.Original(a1);
+        PluginLog.Debug($"RET = {ret},Num of received:{RsvBuffer.Count}");
+        return ret;
+    }
+
+    public unsafe delegate uint RecordPacketDelegate(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length);
+    [Signature("E8 ?? ?? ?? ?? 84 C0 74 60 33 C0", DetourName = nameof(RecordPacketDetour))]
+    private static Hook<RecordPacketDelegate> RecordPacketHook;
+    private static uint RecordPacketDetour(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length) {
+        //Remove player¡®s names here
+        PluginLog.Debug($"Received:0x{opcode:X},Length£º{length}");
+        switch (opcode) {
+
+        }
+        return RecordPacketHook.Original(replayModule,targetId,opcode,data,length);
+    }
+
+    private unsafe delegate uint DispatchPacketDelegate(Structures.FFXIVReplay* replayModule, IntPtr header, IntPtr data);
+    [Signature("E8 ?? ?? ?? ?? 80 BB ?? ?? ?? ?? ?? 77 93",DetourName = nameof(DispatchPacketDetour))]
+    private static Hook<DispatchPacketDelegate> DispatchPacketHook;
+    private static unsafe uint DispatchPacketDetour(Structures.FFXIVReplay* replayModule, nint header, nint data)
+    {
+        var opcode = *(ushort*)header;
+        PluginLog.Debug($"Catched:0x{opcode:X}");
+        switch (opcode) {
+            case RsvOpcde:
+                //ReadRsv();
+                RsvReceiveHook.Original(data);
+                break;
+            case RsfOpcde:
+                //ReadRsf();
+                RsfReceiveHook.Original(data);
+                break;
+        }
+        return DispatchPacketHook.Original(replayModule, header, data);
+    }
 
     public static string GetReplaySlotName(int slot) => $"FFXIV_{DalamudApi.ClientState.LocalContentId:X16}_{slot:D3}.dat";
 
@@ -698,6 +776,11 @@ public unsafe class Game
         DisplayRecordingOnDTRBarHook.Enable();
         EventBeginHook.Enable();
 
+        RsvReceiveHook.Enable();
+        RsfReceiveHook.Enable();
+        RecordPacketHook.Enable();
+        DispatchPacketHook.Enable();
+
         waymarkToggle += 0x48;
 
         SetSavedRecordingCIDs(DalamudApi.ClientState.LocalContentId);
@@ -718,6 +801,11 @@ public unsafe class Game
         DisplayRecordingOnDTRBarHook?.Dispose();
         ContentDirectorTimerUpdateHook?.Dispose();
         EventBeginHook?.Dispose();
+
+        RsvReceiveHook?.Dispose();
+        RsfReceiveHook?.Dispose();
+        RecordPacketHook?.Dispose();
+        DispatchPacketHook?.Dispose();
 
         if (ffxivReplay != null)
             SetSavedRecordingCIDs(0);
