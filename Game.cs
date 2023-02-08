@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Hooking;
@@ -269,7 +270,9 @@ public unsafe class Game
             foreach (var rsv in RsvBuffer)
             {
                 PluginLog.Log("Recording RSV ...");
-                RecordPacketHook.Original(ffxivReplay,0xE000_0000, RsvOpcde, a1,RsvSize);
+                fixed (byte* data = rsv) {
+                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)data, RsvSize);
+                }
             }
             RsvBuffer.Clear();
         }
@@ -289,9 +292,11 @@ public unsafe class Game
         PluginLog.Debug("Received a RSF packet");
         RsfBuffer.Add(MemoryHelper.ReadRaw(a1, RsfSize));
         if (IsRecording) {
-            foreach (var rsv in RsfBuffer) {
+            foreach (var rsf in RsfBuffer) {
                 PluginLog.Log("Recording RSF ...");
-                RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, a1, RsfSize);
+                fixed (byte* data = rsf) {
+                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, (IntPtr)data, RsfSize);
+                }
             }
             RsfBuffer.Clear();
         }
