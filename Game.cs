@@ -113,15 +113,15 @@ public unsafe class Game
             PluginLog.Debug($"Start recording {RsfBuffer.Count} rsf");
             foreach (var rsf in RsfBuffer) {
                 fixed (byte* data = rsf) {
-                    var size = *(int*)data;   //Value size
-                    var length = size + 0x4 + 0x30;     //package size
-                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, (IntPtr)data, (ulong)length);
+                    //var size = *(int*)data;   //Value size
+                    //var length = size + 0x4 + 0x30;     //package size
+                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, (IntPtr)data, (ulong)rsf.Length);
                 }
             }
             PluginLog.Debug($"Start recording {RsvBuffer.Count} rsv");
             foreach (var rsv in RsvBuffer) {
                 fixed (byte* data = rsv) {
-                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)data, (ulong)RsfSize);
+                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)data, (ulong)rsv.Length);
                 }
             }
             RsfBuffer.Clear();
