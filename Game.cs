@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Hooking;
@@ -14,7 +13,6 @@ using Dalamud.Utility.Signatures;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
-using Lumina.Excel.GeneratedSheets;
 
 namespace ARealmRecorded;
 
@@ -107,7 +105,28 @@ public unsafe class Game
 
         if (contentDirectorOffset > 0)
             ContentDirectorTimerUpdateHook?.Enable();
-    }
+
+        PluginLog.Log($"Recording {RsvBuffer.Count} RSV ...");
+        foreach (var rsv in RsvBuffer)
+        {
+            fixed (byte* rsvdata = rsv)
+            {
+                RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)rsvdata, (ulong)rsv.Length);
+            }
+        }
+        RsvBuffer.Clear();
+
+        PluginLog.Log($"Recording {RsfBuffer.Count} RSF ...");
+        foreach (var rsf in RsfBuffer)
+        {
+            fixed (byte* rsfdata = rsf)
+            {
+                RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, (IntPtr)rsfdata, RsfSize);
+            }
+        }
+        RsfBuffer.Clear();
+
+        }
 
     private delegate byte RequestPlaybackDelegate(Structures.FFXIVReplay* ffxivReplay, byte slot);
     [Signature("48 89 5C 24 08 57 48 83 EC 30 F6 81 ?? ?? ?? ?? 04", DetourName = "RequestPlaybackDetour")] // E8 ?? ?? ?? ?? EB 2B 48 8B CB 89 53 2C (+0x14)
@@ -273,16 +292,6 @@ public unsafe class Game
         var size = Marshal.ReadInt32(a1);   //Value size
         var length = size + 0x4 + 0x30;     //package size
         RsvBuffer.Add(MemoryHelper.ReadRaw(a1, length));
-        if (IsRecording) {
-            PluginLog.Log($"Recording {RsvBuffer.Count} RSV ...");
-            foreach (var rsv in RsvBuffer)
-            {
-                fixed (byte* data = rsv) {
-                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)data, (ulong)size);
-                }
-            }
-            RsvBuffer.Clear();
-        }
         var ret = RsvReceiveHook.Original(a1);
         PluginLog.Debug($"RET = {ret},Num of received:{RsvBuffer.Count}");
         return ret;
@@ -300,17 +309,8 @@ public unsafe class Game
     {
         PluginLog.Debug("Received a RSF packet");
         RsfBuffer.Add(MemoryHelper.ReadRaw(a1, RsfSize));
-        if (IsRecording) {
-            PluginLog.Log($"Recording {RsfBuffer.Count} RSF ...");
-            foreach (var rsf in RsfBuffer) {
-                fixed (byte* data = rsf) {
-                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, (IntPtr)data, RsfSize);
-                }
-            }
-            RsfBuffer.Clear();
-        }
         var ret = RsfReceiveHook.Original(a1);
-        PluginLog.Debug($"RET = {ret},Num of received:{RsvBuffer.Count}");
+        PluginLog.Debug($"RET = {ret},Num of received:{RsfBuffer.Count}");
         return ret;
     }
 
@@ -320,9 +320,8 @@ public unsafe class Game
     private static uint RecordPacketDetour(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length) {
         //Remove player's names here
         PluginLog.Debug($"Received:0x{opcode:X},Length:{length}");
-        switch (opcode) {
-
-        }
+        
+        
         return RecordPacketHook.Original(replayModule,targetId,opcode,data,length);
     }
 
