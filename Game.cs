@@ -45,6 +45,8 @@ public unsafe class Game
     private static readonly Memory.Replacer removeProcessingLimitReplacer2 = new("77 57 48 8B 0D ?? ?? ?? ?? 33 C0", new byte[] { 0x90, 0x90 }, true);
     private static readonly Memory.Replacer forceFastForwardReplacer = new("0F 83 ?? ?? ?? ?? 0F B7 47 02 4C 8D 47 0C", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 });
     private static readonly Memory.Replacer fixP8Replacer = new("73 ?? 8B 52 08 48 8D 0D", new byte[] { 0xEB }, true);
+    private static readonly Memory.Replacer hideSelfNameReplacer = new("74 38 41 3B 1F", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
+    private static readonly Memory.Replacer hideSelfNameReplacer2 = new("0F 85 ?? ?? ?? ?? 48 ?? ?? ?? ?? E8 ?? ?? ?? ?? F6 05", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
 
     [Signature("48 8D 0D ?? ?? ?? ?? 88 44 24 24", ScanType = ScanType.StaticAddress)]
     public static Structures.FFXIVReplay* ffxivReplay;
