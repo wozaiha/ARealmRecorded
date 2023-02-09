@@ -67,7 +67,7 @@ public unsafe class Game
     private static delegate* unmanaged<Structures.FFXIVReplay*, byte, void> beginRecording;
     public static void BeginRecording() => beginRecording(ffxivReplay, 1);
 
-    [Signature("E8 ?? ?? ?? ?? 84 C0 74 8D")]
+    [Signature("E8 ?? ?? ?? ?? 84 C0 74 8D 48 8B CE")]
     private static delegate* unmanaged<Structures.FFXIVReplay*, byte, byte> setChapter;
     private static byte SetChapter(byte chapter) => setChapter(ffxivReplay, chapter);
 
@@ -318,8 +318,8 @@ public unsafe class Game
     [Signature("E8 ?? ?? ?? ?? 84 C0 74 60 33 C0", DetourName = nameof(RecordPacketDetour))]
     private static Hook<RecordPacketDelegate> RecordPacketHook;
     private static uint RecordPacketDetour(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length) {
-        //Remove player��s names here
-        PluginLog.Debug($"Received:0x{opcode:X},Length��{length}");
+        //Remove player's names here
+        PluginLog.Debug($"Received:0x{opcode:X},Length:{length}");
         switch (opcode) {
 
         }
