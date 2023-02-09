@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Hooking;
@@ -274,7 +275,9 @@ public unsafe class Game
             PluginLog.Log($"Recording {RsvBuffer.Count} RSV ...");
             foreach (var rsv in RsvBuffer)
             {
-                RecordPacketHook.Original(ffxivReplay,0xE000_0000, RsvOpcde, a1,(ulong)size);
+                fixed (byte* data = rsv) {
+                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)data, (ulong)size);
+                }
             }
             RsvBuffer.Clear();
         }
@@ -297,8 +300,10 @@ public unsafe class Game
         RsfBuffer.Add(MemoryHelper.ReadRaw(a1, RsfSize));
         if (IsRecording) {
             PluginLog.Log($"Recording {RsfBuffer.Count} RSF ...");
-            foreach (var rsv in RsfBuffer) {
-                RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, a1, RsfSize);
+            foreach (var rsf in RsfBuffer) {
+                fixed (byte* data = rsf) {
+                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, (IntPtr)data, RsfSize);
+                }
             }
             RsfBuffer.Clear();
         }
@@ -311,8 +316,8 @@ public unsafe class Game
     [Signature("E8 ?? ?? ?? ?? 84 C0 74 60 33 C0", DetourName = nameof(RecordPacketDetour))]
     private static Hook<RecordPacketDelegate> RecordPacketHook;
     private static uint RecordPacketDetour(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length) {
-        //Remove player¡®s names here
-        PluginLog.Debug($"Received:0x{opcode:X},Length£º{length}");
+        //Remove playerï¿½ï¿½s names here
+        PluginLog.Debug($"Received:0x{opcode:X},Lengthï¿½ï¿½{length}");
         switch (opcode) {
 
         }
