@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -107,6 +108,25 @@ public unsafe class Game
 
         if (contentDirectorOffset > 0)
             ContentDirectorTimerUpdateHook?.Enable();
+
+        if (IsRecording) {
+            PluginLog.Debug($"Start recording {RsfBuffer.Count} rsf");
+            foreach (var rsf in RsfBuffer) {
+                fixed (byte* data = rsf) {
+                    var size = *(int*)data;   //Value size
+                    var length = size + 0x4 + 0x30;     //package size
+                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, (IntPtr)data, (ulong)length);
+                }
+            }
+            PluginLog.Debug($"Start recording {RsvBuffer.Count} rsv");
+            foreach (var rsv in RsvBuffer) {
+                fixed (byte* data = rsv) {
+                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)data, (ulong)RsfSize);
+                }
+            }
+            RsfBuffer.Clear();
+            RsvBuffer.Clear();
+        }
     }
 
     private delegate byte RequestPlaybackDelegate(Structures.FFXIVReplay* ffxivReplay, byte slot);
@@ -270,21 +290,11 @@ public unsafe class Game
     private static long RsvReceiveDetour(IntPtr a1)
     {
         PluginLog.Debug("Received a RSV packet,");
-        var size = Marshal.ReadInt32(a1);   //Value size
+        var size = *(int*)a1;   //Value size
         var length = size + 0x4 + 0x30;     //package size
         RsvBuffer.Add(MemoryHelper.ReadRaw(a1, length));
-        if (IsRecording) {
-            PluginLog.Log($"Recording {RsvBuffer.Count} RSV ...");
-            foreach (var rsv in RsvBuffer)
-            {
-                fixed (byte* data = rsv) {
-                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)data, (ulong)size);
-                }
-            }
-            RsvBuffer.Clear();
-        }
         var ret = RsvReceiveHook.Original(a1);
-        PluginLog.Debug($"RET = {ret},Num of received:{RsvBuffer.Count}");
+        PluginLog.Debug($"RSV:RET = {ret:X},Num of received:{RsvBuffer.Count}");
         return ret;
     }
 
@@ -300,17 +310,8 @@ public unsafe class Game
     {
         PluginLog.Debug("Received a RSF packet");
         RsfBuffer.Add(MemoryHelper.ReadRaw(a1, RsfSize));
-        if (IsRecording) {
-            PluginLog.Log($"Recording {RsfBuffer.Count} RSF ...");
-            foreach (var rsf in RsfBuffer) {
-                fixed (byte* data = rsf) {
-                    RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, (IntPtr)data, RsfSize);
-                }
-            }
-            RsfBuffer.Clear();
-        }
         var ret = RsfReceiveHook.Original(a1);
-        PluginLog.Debug($"RET = {ret},Num of received:{RsvBuffer.Count}");
+        PluginLog.Debug($"RSF:RET = {ret:X},Num of received:{RsvBuffer.Count}");
         return ret;
     }
 
@@ -319,7 +320,7 @@ public unsafe class Game
     private static Hook<RecordPacketDelegate> RecordPacketHook;
     private static uint RecordPacketDetour(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length) {
         //Remove player's names here
-        PluginLog.Debug($"Received:0x{opcode:X},Length:{length}");
+        //PluginLog.Debug($"Received:0x{opcode:X},Length:{length}");
         switch (opcode) {
 
         }
