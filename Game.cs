@@ -256,20 +256,25 @@ public unsafe class Game
     private static Hook<EventBeginDelegate> EventBeginHook;
     private static IntPtr EventBeginDetour(IntPtr a1, IntPtr a2) => !InPlayback || ConfigModule.Instance()->GetIntValue(ConfigOption.CutsceneSkipIsContents) == 0 ? EventBeginHook.Original(a1, a2) : IntPtr.Zero;
 
-    private const int RsvSize = 1080;
+    //private const int RsvSize = 1080;
     private const ushort RsvOpcde = 0xF001;
     private static List<byte[]> RsvBuffer = new();
     public unsafe delegate long RsvReceiveDelegate(IntPtr a1);
     [Signature("44 8B 09 4C 8D 41 34",DetourName = nameof(RsvReceiveDetour))]
+    //public unsafe delegate long RsvReceiveDelegate(IntPtr a1, IntPtr a2, IntPtr a3, uint size);   //a2:Key[0x30] a3:Value a1:const
+    //[Signature("E9 ?? ?? ?? ?? CC CC CC CC CC CC CC CC CC 48 8B 11",DetourName = nameof(RsvReceiveDetour))]
     private static Hook<RsvReceiveDelegate> RsvReceiveHook;
-    private static long RsvReceiveDetour(IntPtr a1) {
-        PluginLog.Debug("Received a RSV packet");
-        RsvBuffer.Add(MemoryHelper.ReadRaw(a1, RsvSize));
+    private static long RsvReceiveDetour(IntPtr a1)
+    {
+        PluginLog.Debug("Received a RSV packet,");
+        var size = Marshal.ReadInt32(a1);   //Value size
+        var length = size + 0x4 + 0x30;     //package size
+        RsvBuffer.Add(MemoryHelper.ReadRaw(a1, length));
         if (IsRecording) {
+            PluginLog.Log($"Recording {RsvBuffer.Count} RSV ...");
             foreach (var rsv in RsvBuffer)
             {
-                PluginLog.Log("Recording RSV ...");
-                RecordPacketHook.Original(ffxivReplay,0xE000_0000, RsvOpcde, a1,RsvSize);
+                RecordPacketHook.Original(ffxivReplay,0xE000_0000, RsvOpcde, a1,(ulong)size);
             }
             RsvBuffer.Clear();
         }
@@ -283,14 +288,16 @@ public unsafe class Game
     private static List<byte[]> RsfBuffer = new();
     public unsafe delegate long RsfReceiveDelegate(IntPtr a1);
     [Signature("48 8B 11 4C 8D 41 08", DetourName = nameof(RsfReceiveDetour))]
+    //public unsafe delegate long RsfReceiveDelegate(IntPtr a1, ulong a2, IntPtr a3);        //a1:const a2:Key a2:Value
+    //[Signature("48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC 40 48 83 B9 ?? ?? ?? ?? ?? 49 8B F0", DetourName = nameof(RsfReceiveDetour))]
     private static Hook<RsfReceiveDelegate> RsfReceiveHook;
     private static long RsfReceiveDetour(IntPtr a1)
     {
         PluginLog.Debug("Received a RSF packet");
         RsfBuffer.Add(MemoryHelper.ReadRaw(a1, RsfSize));
         if (IsRecording) {
+            PluginLog.Log($"Recording {RsfBuffer.Count} RSF ...");
             foreach (var rsv in RsfBuffer) {
-                PluginLog.Log("Recording RSF ...");
                 RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsfOpcde, a1, RsfSize);
             }
             RsfBuffer.Clear();
