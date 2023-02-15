@@ -37,6 +37,15 @@ public unsafe class Game
 
     private static List<(FileInfo, Structures.FFXIVReplay.Header)> replayList;
     public static List<(FileInfo, Structures.FFXIVReplay.Header)> ReplayList => replayList ?? GetReplayList();
+    
+    private const int RsfSize = 0x48;
+    private const ushort RsfOpcde = 0xF002;
+    private static List<byte[]> RsfBuffer = new();
+    private const ushort RsvOpcde = 0xF001;
+    private static List<byte[]> RsvBuffer = new();
+    private const ushort DeltaOpCode = 0xF003;
+
+    public static Dictionary<ushort, ushort> OpCodeDictionary = null;
 
     private static readonly Memory.Replacer alwaysRecordReplacer = new("24 06 3C 02 75 08 48 8B CB E8", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
     private static readonly Memory.Replacer removeRecordReadyToastReplacer = new("BA CB 07 00 00 48 8B CF E8", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
@@ -52,6 +61,15 @@ public unsafe class Game
 
     [Signature("48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? EB 0E", ScanType = ScanType.StaticAddress)]
     private static byte* waymarkToggle; // Actually a uint, but only seems to use the first 2 bits
+
+    [Signature("89 1D ?? ?? ?? ?? 40 84 FF", ScanType = ScanType.StaticAddress)]
+    private static int* delta0;
+
+    [Signature("89 15 ?? ?? ?? ?? EB 1E", ScanType = ScanType.StaticAddress)]
+    private static int* delta4;
+
+    [Signature("03 05 ?? ?? ?? ?? 03 C3", ScanType = ScanType.StaticAddress)] //Global = delta0+0x8 CN = delta0+0xC
+    private static int* deltaC;
 
     public static bool InPlayback => (ffxivReplay->playbackControls & 4) != 0;
     public static bool IsRecording => (ffxivReplay->status & 0x74) == 0x74;
@@ -122,8 +140,14 @@ public unsafe class Game
                     RecordPacketHook.Original(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)data, (ulong)rsv.Length);
                 }
             }
+
+            var ptr = Marshal.AllocHGlobal(4);
+            Marshal.WriteInt32(ptr, *delta4 - *delta0 - *deltaC);
+            PluginLog.Debug($"Recording delta = {*delta4 - *delta0 - *deltaC}");
+            RecordPacketHook.Original(ffxivReplay, 0xE000_0000, DeltaOpCode, ptr, 4);
             RsfBuffer.Clear();
             RsvBuffer.Clear();
+            Marshal.FreeHGlobal(ptr);
         }
     }
 
@@ -147,7 +171,6 @@ public unsafe class Game
         }
 
         var ret = RequestPlaybackHook.Original(ffxivReplay, slot);
-
         if (customSlot)
             ffxivReplay->savedReplayHeaders[0] = prevHeader;
 
@@ -277,9 +300,6 @@ public unsafe class Game
     private static Hook<EventBeginDelegate> EventBeginHook;
     private static IntPtr EventBeginDetour(IntPtr a1, IntPtr a2) => !InPlayback || ConfigModule.Instance()->GetIntValue(ConfigOption.CutsceneSkipIsContents) == 0 ? EventBeginHook.Original(a1, a2) : IntPtr.Zero;
 
-    //private const int RsvSize = 1080;
-    private const ushort RsvOpcde = 0xF001;
-    private static List<byte[]> RsvBuffer = new();
     public unsafe delegate long RsvReceiveDelegate(IntPtr a1);
     [Signature("44 8B 09 4C 8D 41 34",DetourName = nameof(RsvReceiveDetour))]
     //public unsafe delegate long RsvReceiveDelegate(IntPtr a1, IntPtr a2, IntPtr a3, uint size);   //a2:Key[0x30] a3:Value a1:const
@@ -296,9 +316,6 @@ public unsafe class Game
         return ret;
     }
 
-    private const int RsfSize = 0x48;
-    private const ushort RsfOpcde = 0xF002;
-    private static List<byte[]> RsfBuffer = new();
     public unsafe delegate long RsfReceiveDelegate(IntPtr a1);
     [Signature("48 8B 11 4C 8D 41 08", DetourName = nameof(RsfReceiveDetour))]
     //public unsafe delegate long RsfReceiveDelegate(IntPtr a1, ulong a2, IntPtr a3);        //a1:const a2:Key a2:Value
@@ -341,9 +358,36 @@ public unsafe class Game
                 //ReadRsf();
                 RsfReceiveHook.Original(data);
                 break;
+            case DeltaOpCode:
+                UpdateDelta(data);
+                break;
+            default:
+                if (OpCodeDictionary is null) break;
+                *(ushort*)header = UpdateOpCode(opcode);
+                PluginLog.Information($"changed {opcode:X} to {UpdateOpCode(opcode):X}");
+                break;
         }
-        return DispatchPacketHook.Original(replayModule, header, data);
+        var result = DispatchPacketHook.Original(replayModule, header, data);
+        return result;
     }
+
+    private static ushort UpdateOpCode(ushort opCode)
+    {
+        if (OpCodeDictionary is null) return opCode;
+        if (OpCodeDictionary.TryGetValue(opCode, out var result)) return result;
+        PluginLog.Error($"Error when updating OpCode 0x{opCode:X}");
+        return opCode;
+    }
+
+    private static void UpdateDelta(nint delta)
+    {
+        //delta4 = delta0 + deltaC + *delta
+        PluginLog.Warning($"Old Delta = {*delta4:X} - {*delta0:X} - {*deltaC:X} = {*delta4 - *delta0 - *deltaC:X}");
+        if (*delta4 - *delta0 - *deltaC == *(int*)delta) return;
+        *delta4 = *delta0 + *deltaC + *(int*)delta;
+        PluginLog.Warning($"New Delta = {*(int*)delta:X}");
+    }
+
 
     public static string GetReplaySlotName(int slot) => $"FFXIV_{DalamudApi.ClientState.LocalContentId:X16}_{slot:D3}.dat";
 
@@ -668,6 +712,17 @@ public unsafe class Game
     public static void SetDutyRecorderMenuSelection(IntPtr agent, string path, Structures.FFXIVReplay.Header header)
     {
         header.localCID = DalamudApi.ClientState.LocalContentId;
+
+        OpCodeDictionary = null;
+        if (header.replayVersion != ffxivReplay->replayVersion)
+        {
+            PluginLog.Warning($"Found different version : target = {header.replayVersion},System = {ffxivReplay->replayVersion}");
+            OpCodeDictionary = OpCode.Compare(header.replayVersion, ffxivReplay->replayVersion);
+        }
+        
+        if (OpCodeDictionary is not null) 
+            header.replayVersion = ffxivReplay->replayVersion;
+
         lastSelectedReplay = path;
         lastSelectedHeader = header;
         var prevHeader = ffxivReplay->savedReplayHeaders[0];

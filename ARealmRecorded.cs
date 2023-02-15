@@ -28,6 +28,8 @@ public class ARealmRecorded : IDalamudPlugin
             DalamudApi.PluginInterface.UiBuilder.Draw += Draw;
             //DalamudApi.PluginInterface.UiBuilder.OpenConfigUi += ToggleConfig;
             DalamudApi.ToastGui.Toast += OnToast;
+
+            OpCode.Initialize();
         }
         catch (Exception e)
         {
@@ -64,6 +66,7 @@ public class ARealmRecorded : IDalamudPlugin
 
         Game.Dispose();
         Memory.Dispose();
+        OpCode.Dispose();
     }
 
     public void Dispose()
