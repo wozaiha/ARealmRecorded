@@ -50,7 +50,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <None Update="ARealmRecorded.json">
+        <None Update="ARealmRecorded+.json">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
         <None Update="OpCode\8389974.json">
