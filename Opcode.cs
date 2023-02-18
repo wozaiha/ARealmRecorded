@@ -111,10 +111,11 @@ public unsafe class OpCode
 
     public static void Initialize()
     {
-        var files = DalamudApi.PluginInterface.ConfigDirectory.GetFiles("*.json");
+        var files = DalamudApi.PluginInterface.AssemblyLocation.Directory?.GetDirectories("OpCode").First().GetFiles("*.json");
+        
         foreach (var file in files)
         {
-            var json = GetOpcode(Path.Combine(DalamudApi.PluginInterface.GetPluginConfigDirectory(), file.FullName));
+            var json = GetOpcode(Path.Combine(DalamudApi.PluginInterface.GetPluginConfigDirectory(),"OpCode", file.FullName));
             if (json is null) continue;
             OpCodeDic.TryAdd(json.ver_id, json);
         }
