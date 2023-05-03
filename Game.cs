@@ -280,36 +280,6 @@ public unsafe class Game
     private static Hook<EventBeginDelegate> EventBeginHook;
     private static IntPtr EventBeginDetour(IntPtr a1, IntPtr a2) => !InPlayback || ConfigModule.Instance()->GetIntValue(ConfigOption.CutsceneSkipIsContents) == 0 ? EventBeginHook.Original(a1, a2) : IntPtr.Zero;
 
-    public unsafe delegate long RsvReceiveDelegate(IntPtr a1);
-    [Signature("44 8B 09 4C 8D 41 34",DetourName = nameof(RsvReceiveDetour))]
-    //public unsafe delegate long RsvReceiveDelegate(IntPtr a1, IntPtr a2, IntPtr a3, uint size);   //a2:Key[0x30] a3:Value a1:const
-    //[Signature("E9 ?? ?? ?? ?? CC CC CC CC CC CC CC CC CC 48 8B 11",DetourName = nameof(RsvReceiveDetour))]
-    private static Hook<RsvReceiveDelegate> RsvReceiveHook;
-    private static long RsvReceiveDetour(IntPtr a1)
-    {
-        PluginLog.Debug("Received a RSV packet,");
-        var size = *(int*)a1;   //Value size
-        var length = size + 0x4 + 0x30;     //package size
-        RsvBuffer.Add(MemoryHelper.ReadRaw(a1, length));
-        var ret = RsvReceiveHook.Original(a1);
-        PluginLog.Debug($"RSV:RET = {ret:X},Num of received:{RsvBuffer.Count}");
-        return ret;
-    }
-
-    public unsafe delegate long RsfReceiveDelegate(IntPtr a1);
-    [Signature("48 8B 11 4C 8D 41 08", DetourName = nameof(RsfReceiveDetour))]
-    //public unsafe delegate long RsfReceiveDelegate(IntPtr a1, ulong a2, IntPtr a3);        //a1:const a2:Key a2:Value
-    //[Signature("48 89 5C 24 ?? 48 89 74 24 ?? 57 48 83 EC 40 48 83 B9 ?? ?? ?? ?? ?? 49 8B F0", DetourName = nameof(RsfReceiveDetour))]
-    private static Hook<RsfReceiveDelegate> RsfReceiveHook;
-    private static long RsfReceiveDetour(IntPtr a1)
-    {
-        PluginLog.Debug("Received a RSF packet");
-        RsfBuffer.Add(MemoryHelper.ReadRaw(a1, RsfSize));
-        var ret = RsfReceiveHook.Original(a1);
-        PluginLog.Debug($"RSF:RET = {ret:X},Num of received:{RsvBuffer.Count}");
-        return ret;
-    }
-
     public unsafe delegate uint RecordPacketDelegate(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length);
     [Signature("E8 ?? ?? ?? ?? 84 C0 74 60 33 C0", DetourName = nameof(RecordPacketDetour))]
     private static Hook<RecordPacketDelegate> RecordPacketHook;
@@ -320,35 +290,6 @@ public unsafe class Game
 
         }
         return RecordPacketHook.Original(replayModule,targetId,opcode,data,length);
-    }
-
-    private unsafe delegate uint DispatchPacketDelegate(Structures.FFXIVReplay* replayModule, IntPtr header, IntPtr data);
-    [Signature("E8 ?? ?? ?? ?? 80 BB ?? ?? ?? ?? ?? 77 93",DetourName = nameof(DispatchPacketDetour))]
-    private static Hook<DispatchPacketDelegate> DispatchPacketHook;
-    private static unsafe uint DispatchPacketDetour(Structures.FFXIVReplay* replayModule, nint header, nint data)
-    {
-        var opcode = *(ushort*)header;
-        PluginLog.Debug($"Catched:0x{opcode:X}");
-        switch (opcode) {
-            case RsvOpcde:
-                //ReadRsv();
-                RsvReceiveHook.Original(data);
-                break;
-            case RsfOpcde:
-                //ReadRsf();
-                RsfReceiveHook.Original(data);
-                break;
-            case DeltaOpCode:
-                UpdateDelta(data);
-                break;
-            default:
-                if (OpCodeDictionary is null) break;
-                *(ushort*)header = UpdateOpCode(opcode);
-                PluginLog.Information($"changed {opcode:X} to {UpdateOpCode(opcode):X}");
-                break;
-        }
-        var result = DispatchPacketHook.Original(replayModule, header, data);
-        return result;
     }
 
     private static ushort UpdateOpCode(ushort opCode)
@@ -429,6 +370,9 @@ public unsafe class Game
                 break;
             case RsfOpcode:
                 RsfReceiveHook.Original(data);
+                break;
+            case DeltaOpCode:
+                UpdateDelta(data);
                 break;
         }
         return DispatchPacketHook.Original(replayModule, header, data);
@@ -855,7 +799,7 @@ public unsafe class Game
         if (OpCodeDictionary is not null) 
             header.replayVersion = ffxivReplay->replayVersion;
 
-        lastSelectedReplay = path;
+        LastSelectedReplay = path;
         lastSelectedHeader = header;
         var prevHeader = ffxivReplay->savedReplayHeaders[0];
         ffxivReplay->savedReplayHeaders[0] = header;
