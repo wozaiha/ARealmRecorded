@@ -2,15 +2,14 @@
 
     <PropertyGroup>
         <Version>0.5.1.2</Version>
-        <TargetFramework>net7.0</TargetFramework>
+        <TargetFramework>net6.0</TargetFramework>
         <PlatformTarget>x64</PlatformTarget>
         <Platforms>x64;AnyCPU</Platforms>
-        <LangVersion>11.0</LangVersion>
+        <LangVersion>10.0</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
         <NoWarn>CA1416</NoWarn>
         <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
-        <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     </PropertyGroup>
 
     <PropertyGroup>
@@ -53,16 +52,7 @@
         <None Update="ARealmRecorded+.json">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
-        <None Update="OpCode\8389974.json">
-          <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-        </None>
-        <None Update="OpCode\8492180.json">
-          <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-        </None>
-        <None Update="OpCode\8521762.json">
-          <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-        </None>
-        <None Update="OpCode\8555434.json">
+        <None Update="OpCode\*.*">
           <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </None>
     </ItemGroup>
