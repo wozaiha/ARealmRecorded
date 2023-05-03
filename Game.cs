@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -58,9 +57,8 @@ public unsafe class Game
     private static readonly Memory.Replacer removeProcessingLimitReplacer = new("41 FF C6 E8 ?? ?? ?? ?? 48 8B F8 48 85 C0 0F 84", new byte[] { 0x90, 0x90, 0x90 }, true);
     private static readonly Memory.Replacer removeProcessingLimitReplacer2 = new("77 57 48 8B 0D ?? ?? ?? ?? 33 C0", new byte[] { 0x90, 0x90 }, true);
     private static readonly Memory.Replacer forceFastForwardReplacer = new("0F 83 ?? ?? ?? ?? 0F B7 47 02 4C 8D 47 0C", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 });
-    private static readonly Memory.Replacer fixP8Replacer = new("73 ?? 8B 52 08 48 8D 0D", new byte[] { 0xEB }, true);
-    private static readonly Memory.Replacer hideSelfNameReplacer = new("74 38 41 3B 1F", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
-    private static readonly Memory.Replacer hideSelfNameReplacer2 = new("0F 85 ?? ?? ?? ?? 48 ?? ?? ?? ?? E8 ?? ?? ?? ?? F6 05", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
+    //private static readonly Memory.Replacer hideSelfNameReplacer = new("74 38 41 3B 1F", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
+    //private static readonly Memory.Replacer hideSelfNameReplacer2 = new("0F 85 ?? ?? ?? ?? 48 ?? ?? ?? ?? E8 ?? ?? ?? ?? F6 05", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
 
     // mov rcx, r14 -> xor rcx, rcx
     public static readonly Memory.Replacer replaceLocalPlayerNameReplacer = new(DalamudApi.SigScanner.ScanModule("F6 05 ?? ?? ?? ?? 04 74 ?? 45 33 C0 33 D2 49 8B CE") + 14, new byte[] { 0x48, 0x31, 0xC9 }, ARealmRecorded.Config.EnableHideOwnName);
@@ -98,14 +96,6 @@ public unsafe class Game
     [Signature("E8 ?? ?? ?? ?? 84 C0 74 8D 48 8B CE")]
     private static delegate* unmanaged<Structures.FFXIVReplay*, byte, byte> setChapter;
     private static byte SetChapter(byte chapter) => setChapter(ffxivReplay, chapter);
-
-    //[Signature("E9 ?? ?? ?? ?? 48 83 4B 70 04")]
-    //private static delegate* unmanaged<Structures.FFXIVReplay*, byte, byte> addRecordingChapter;
-    //public static bool AddRecordingChapter(byte type) => addRecordingChapter(ffxivReplay, type) != 0;
-
-    //[Signature("40 53 48 83 EC 20 0F B6 81 ?? ?? ?? ?? 48 8B D9 24 06 3C 04 75 5D 83 B9")]
-    //private static delegate* unmanaged<Structures.FFXIVReplay*, void> resetPlayback;
-    //public static void ResetPlayback() => resetPlayback(ffxivReplay);
 
     [Signature("48 89 5C 24 10 57 48 81 EC 70 04 00 00")]
     private static delegate* unmanaged<IntPtr, void> displaySelectedDutyRecording;
