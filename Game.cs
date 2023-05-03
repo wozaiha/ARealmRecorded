@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
@@ -11,7 +13,6 @@ using Dalamud.Logging;
 using Dalamud.Memory;
 using Dalamud.Utility.Signatures;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
-using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 
 namespace ARealmRecorded;
@@ -20,9 +21,11 @@ public unsafe class Game
 {
     private static readonly string replayFolder = Path.Combine(Framework.Instance()->UserPath, "replay");
     private static readonly string autoRenamedFolder = Path.Combine(replayFolder, "autorenamed");
+    private static readonly string archiveZip = Path.Combine(replayFolder, "archive.zip");
     private static readonly string deletedFolder = Path.Combine(replayFolder, "deleted");
     private static Structures.FFXIVReplay.ReplayFile* loadedReplay = null;
-    public static string lastSelectedReplay;
+
+    public static string LastSelectedReplay { get; private set; }
     private static Structures.FFXIVReplay.Header lastSelectedHeader;
 
     private static int quickLoadChapter = -1;
@@ -34,14 +37,18 @@ public unsafe class Game
 
     private static readonly HashSet<uint> whitelistedContentTypes = new() { 1, 2, 3, 4, 5, 9, 28, 29, 30 }; // 22 Event, 26 Eureka, 27 Carnivale
 
-    private static List<(FileInfo, Structures.FFXIVReplay.Header)> replayList;
-    public static List<(FileInfo, Structures.FFXIVReplay.Header)> ReplayList => replayList ?? GetReplayList();
-    
+    private static List<(FileInfo, Structures.FFXIVReplay.ReplayFile)> replayList;
+    public static List<(FileInfo, Structures.FFXIVReplay.ReplayFile)> ReplayList
+    {
+        get => replayList ?? GetReplayList();
+        set => replayList = value;
+    }
+
     private const int RsfSize = 0x48;
-    private const ushort RsfOpcde = 0xF002;
-    private static List<byte[]> RsfBuffer = new();
-    private const ushort RsvOpcde = 0xF001;
-    private static List<byte[]> RsvBuffer = new();
+    private const ushort RsfOpcode = 0xF002;
+    private static readonly List<byte[]> rsfBuffer = new();
+    private const ushort RsvOpcode = 0xF001;
+    private static readonly List<byte[]> rsvBuffer = new();
     private const ushort DeltaOpCode = 0xF003;
 
     public static Dictionary<ushort, ushort> OpCodeDictionary = null;
@@ -52,6 +59,11 @@ public unsafe class Game
     private static readonly Memory.Replacer removeProcessingLimitReplacer2 = new("77 57 48 8B 0D ?? ?? ?? ?? 33 C0", new byte[] { 0x90, 0x90 }, true);
     private static readonly Memory.Replacer forceFastForwardReplacer = new("0F 83 ?? ?? ?? ?? 0F B7 47 02 4C 8D 47 0C", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 });
     private static readonly Memory.Replacer fixP8Replacer = new("73 ?? 8B 52 08 48 8D 0D", new byte[] { 0xEB }, true);
+    private static readonly Memory.Replacer hideSelfNameReplacer = new("74 38 41 3B 1F", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
+    private static readonly Memory.Replacer hideSelfNameReplacer2 = new("0F 85 ?? ?? ?? ?? 48 ?? ?? ?? ?? E8 ?? ?? ?? ?? F6 05", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
+
+    // mov rcx, r14 -> xor rcx, rcx
+    public static readonly Memory.Replacer replaceLocalPlayerNameReplacer = new(DalamudApi.SigScanner.ScanModule("F6 05 ?? ?? ?? ?? 04 74 ?? 45 33 C0 33 D2 49 8B CE") + 14, new byte[] { 0x48, 0x31, 0xC9 }, ARealmRecorded.Config.EnableHideOwnName);
 
     [Signature("48 8D 0D ?? ?? ?? ?? 88 44 24 24", ScanType = ScanType.StaticAddress)]
     public static Structures.FFXIVReplay* ffxivReplay;
@@ -69,6 +81,8 @@ public unsafe class Game
     private static int* deltaC;
 
     public static bool InPlayback => (ffxivReplay->playbackControls & 4) != 0;
+    public static bool IsPaused => (ffxivReplay->playbackControls & 8) != 0;
+    public static bool IsSavingPackets => (ffxivReplay->status & 4) != 0;
     public static bool IsRecording => (ffxivReplay->status & 0x74) == 0x74;
     public static bool IsLoadingChapter => ffxivReplay->selectedChapter < 0x40;
 
@@ -81,7 +95,7 @@ public unsafe class Game
     private static delegate* unmanaged<Structures.FFXIVReplay*, byte, void> beginRecording;
     public static void BeginRecording() => beginRecording(ffxivReplay, 1);
 
-    [Signature("E8 ?? ?? ?? ?? 84 C0 74 8D")]
+    [Signature("E8 ?? ?? ?? ?? 84 C0 74 8D 48 8B CE")]
     private static delegate* unmanaged<Structures.FFXIVReplay*, byte, byte> setChapter;
     private static byte SetChapter(byte chapter) => setChapter(ffxivReplay, chapter);
 
@@ -122,37 +136,7 @@ public unsafe class Game
         if (contentDirectorOffset > 0)
             ContentDirectorTimerUpdateHook?.Enable();
 
-        {
-
-            var delta = *delta4 - *delta0 - *deltaC;
-            PluginLog.Warning($"Delta = {delta}");
-            if (delta >= 0)
-            {
-                var ptr = Marshal.AllocHGlobal(4);
-                Marshal.WriteInt32(ptr, delta);
-                PluginLog.Debug($"Recording delta = {delta}");
-                RecordPacket(ffxivReplay, 0xE000_0000, DeltaOpCode, ptr, 4);
-                Marshal.FreeHGlobal(ptr);
-            }
-            PluginLog.Debug($"Start recording {RsfBuffer.Count} rsf");
-            foreach (var rsf in RsfBuffer) {
-                fixed (byte* data = rsf) {
-                    //var size = *(int*)data;   //Value size
-                    //var length = size + 0x4 + 0x30;     //package size
-                    RecordPacket(ffxivReplay, 0xE000_0000, RsfOpcde, (IntPtr)data, (ulong)rsf.Length);
-                }
-            }
-            PluginLog.Debug($"Start recording {RsvBuffer.Count} rsv");
-            foreach (var rsv in RsvBuffer) {
-                fixed (byte* data = rsv) {
-                    RecordPacket(ffxivReplay, 0xE000_0000, RsvOpcde, (IntPtr)data, (ulong)rsv.Length);
-                }
-            }
-
-            RsfBuffer.Clear();
-            RsvBuffer.Clear();
-            
-        }
+        FlushRsvRsfBuffers(); // TODO: Look into potential issue with packets received from The Unending Journey being added to replays
     }
 
     private delegate byte RequestPlaybackDelegate(Structures.FFXIVReplay* ffxivReplay, byte slot);
@@ -171,7 +155,7 @@ public unsafe class Game
         }
         else
         {
-            lastSelectedReplay = null;
+            LastSelectedReplay = null;
         }
 
         var ret = RequestPlaybackHook.Original(ffxivReplay, slot);
@@ -191,18 +175,10 @@ public unsafe class Game
 
         UnloadReplay();
 
-        if (string.IsNullOrEmpty(lastSelectedReplay))
+        if (string.IsNullOrEmpty(LastSelectedReplay))
             LoadReplay(ffxivReplay->currentReplaySlot);
         else
-            LoadReplay(lastSelectedReplay);
-
-        // TODO: remove in 6.3
-        if (loadedReplay == null) return;
-
-        if (loadedReplay->header.contentID is 883 or 884)
-            fixP8Replacer.Enable();
-        else
-            fixP8Replacer.Disable();
+            LoadReplay(LastSelectedReplay);
     }
 
     [Signature("E8 ?? ?? ?? ?? F6 83 ?? ?? ?? ?? 04 74 38 F6 83 ?? ?? ?? ?? 01", DetourName = "PlaybackUpdateDetour")]
@@ -279,8 +255,8 @@ public unsafe class Game
         return 0;
     }
 
-    private delegate byte DisplayRecordingOnDTRBarDelegate(IntPtr agent);
-    [Signature("E8 ?? ?? ?? ?? 44 0F B6 C0 BA 4F 00 00 00")]
+    private delegate byte DisplayRecordingOnDTRBarDelegate(nint agent);
+    [Signature("E8 ?? ?? ?? ?? 44 0F B6 C0 BA 4F 00 00 00", DetourName = "DisplayRecordingOnDTRBarDetour")]
     private static Hook<DisplayRecordingOnDTRBarDelegate> DisplayRecordingOnDTRBarHook;
     private static byte DisplayRecordingOnDTRBarDetour(IntPtr agent) => (byte)(DisplayRecordingOnDTRBarHook.Original(agent) != 0
         || ARealmRecorded.Config.EnableRecordingIcon && IsRecording && DalamudApi.PluginInterface.UiBuilder.ShouldModifyUi ? 1 : 0);
@@ -304,60 +280,16 @@ public unsafe class Game
     private static Hook<EventBeginDelegate> EventBeginHook;
     private static IntPtr EventBeginDetour(IntPtr a1, IntPtr a2) => !InPlayback || ConfigModule.Instance()->GetIntValue(ConfigOption.CutsceneSkipIsContents) == 0 ? EventBeginHook.Original(a1, a2) : IntPtr.Zero;
 
-    public unsafe delegate long RsvReceiveDelegate(IntPtr a1);
-    [Signature("44 8B 09 4C 8D 41 34", DetourName = nameof(RsvReceiveDetour))]
-    private static Hook<RsvReceiveDelegate> RsvReceiveHook;
-    private static long RsvReceiveDetour(IntPtr a1)
-    {
-        //PluginLog.Debug("Received a RSV packet,");
-        var size = *(int*)a1;   //Value size
-        var length = size + 0x4 + 0x30;     //package size
-        RsvBuffer.Add(MemoryHelper.ReadRaw(a1, length));
-        var ret = RsvReceiveHook.Original(a1);
-        //PluginLog.Debug($"RSV:RET = {ret:X},Num of received:{RsvBuffer.Count}");
-        return ret;
-    }
-
-    public unsafe delegate long RsfReceiveDelegate(IntPtr a1);
-    [Signature("48 8B 11 4C 8D 41 08", DetourName = nameof(RsfReceiveDetour))]
-    private static Hook<RsfReceiveDelegate> RsfReceiveHook;
-    private static long RsfReceiveDetour(IntPtr a1)
-    {
-        //PluginLog.Debug("Received a RSF packet");
-        RsfBuffer.Add(MemoryHelper.ReadRaw(a1, RsfSize));
-        var ret = RsfReceiveHook.Original(a1);
-        //PluginLog.Debug($"RSF:RET = {ret:X},Num of received:{RsvBuffer.Count}");
-        return ret;
-    }
-    [Signature("E8 ?? ?? ?? ?? 84 C0 74 60 33 C0")]
-    private static delegate* unmanaged<Structures.FFXIVReplay*, uint, ushort, IntPtr, ulong, uint> recordPacket;
-    public static void RecordPacket(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length) => recordPacket(replayModule,targetId,opcode,data,length);
-
-    private unsafe delegate uint DispatchPacketDelegate(Structures.FFXIVReplay* replayModule, IntPtr header, IntPtr data);
-    [Signature("E8 ?? ?? ?? ?? 80 BB ?? ?? ?? ?? ?? 77 93", DetourName = nameof(DispatchPacketDetour))]
-    private static Hook<DispatchPacketDelegate> DispatchPacketHook;
-    private static unsafe uint DispatchPacketDetour(Structures.FFXIVReplay* replayModule, nint header, nint data)
-    {
-        var opcode = *(ushort*)header;
-        //PluginLog.Debug($"Dispatch:0x{opcode:X}");
+    public unsafe delegate uint RecordPacketDelegate(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length);
+    [Signature("E8 ?? ?? ?? ?? 84 C0 74 60 33 C0", DetourName = nameof(RecordPacketDetour))]
+    private static Hook<RecordPacketDelegate> RecordPacketHook;
+    private static uint RecordPacketDetour(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length) {
+        //Remove player's names here
+        //PluginLog.Debug($"Received:0x{opcode:X},Length:{length}");
         switch (opcode) {
-            case RsvOpcde:
-                RsvReceiveHook.Original(data);
-                break;
-            case RsfOpcde:
-                RsfReceiveHook.Original(data);
-                break;
-            case DeltaOpCode:
-                UpdateDelta(data);
-                break;
-            default:
-                if (OpCodeDictionary is null) break;
-                *(ushort*)header = UpdateOpCode(opcode);
-                PluginLog.Information($"changed {opcode:X} to {UpdateOpCode(opcode):X}");
-                break;
+
         }
-        var result = DispatchPacketHook.Original(replayModule, header, data);
-        return result;
+        return RecordPacketHook.Original(replayModule,targetId,opcode,data,length);
     }
 
     private static ushort UpdateOpCode(ushort opCode)
@@ -378,6 +310,74 @@ public unsafe class Game
     }
 
 
+    public delegate byte RsvReceiveDelegate(nint data);
+    [Signature("44 8B 09 4C 8D 41 34", DetourName = nameof(RsvReceiveDetour))]
+    private static Hook<RsvReceiveDelegate> RsvReceiveHook;
+    private static byte RsvReceiveDetour(nint data)
+    {
+        var size = *(int*)data; // Value size
+        var length = size + 0x4 + 0x30; // Package size
+        rsvBuffer.Add(MemoryHelper.ReadRaw(data, length));
+        return RsvReceiveHook.Original(data);
+    }
+
+    public delegate byte RsfReceiveDelegate(nint data);
+    [Signature("48 8B 11 4C 8D 41 08", DetourName = nameof(RsfReceiveDetour))]
+    private static Hook<RsfReceiveDelegate> RsfReceiveHook;
+    private static byte RsfReceiveDetour(nint data)
+    {
+        rsfBuffer.Add(MemoryHelper.ReadRaw(data, RsfSize));
+        return RsfReceiveHook.Original(data);
+    }
+
+    private static void FlushRsvRsfBuffers()
+    {
+        if (IsSavingPackets)
+        {
+            //PluginLog.Debug($"Recording {rsfBuffer.Count} RSF packets");
+            foreach (var rsf in rsfBuffer)
+            {
+                fixed (byte* data = rsf)
+                    RecordPacket(ffxivReplay, 0xE000_0000, RsfOpcode, (nint)data, (ulong)rsf.Length);
+            }
+
+            //PluginLog.Debug($"Recording {rsvBuffer.Count} RSV packets");
+            foreach (var rsv in rsvBuffer)
+            {
+                fixed (byte* data = rsv)
+                    RecordPacket(ffxivReplay, 0xE000_0000, RsvOpcode, (nint)data, (ulong)rsv.Length);
+            }
+        }
+
+        rsfBuffer.Clear();
+        rsvBuffer.Clear();
+    }
+
+    [Signature("E8 ?? ?? ?? ?? 84 C0 74 60 33 C0")]
+    private static delegate* unmanaged<Structures.FFXIVReplay*, uint, ushort, nint, ulong, uint> recordPacket;
+    public static void RecordPacket(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, nint data, ulong length) => recordPacket(replayModule, targetId, opcode, data, length);
+
+    private delegate uint DispatchPacketDelegate(Structures.FFXIVReplay* replayModule, nint header, nint data);
+    [Signature("E8 ?? ?? ?? ?? 80 BB ?? ?? ?? ?? ?? 77 93", DetourName = nameof(DispatchPacketDetour))]
+    private static Hook<DispatchPacketDelegate> DispatchPacketHook;
+    private static uint DispatchPacketDetour(Structures.FFXIVReplay* replayModule, nint header, nint data)
+    {
+        var opcode = *(ushort*)header;
+        //PluginLog.Debug($"Dispatch:0x{opcode:X}");
+        switch (opcode) {
+            case RsvOpcode:
+                RsvReceiveHook.Original(data);
+                break;
+            case RsfOpcode:
+                RsfReceiveHook.Original(data);
+                break;
+            case DeltaOpCode:
+                UpdateDelta(data);
+                break;
+        }
+        return DispatchPacketHook.Original(replayModule, header, data);
+    }
+
     public static string GetReplaySlotName(int slot) => $"FFXIV_{DalamudApi.ClientState.LocalContentId:X16}_{slot:D3}.dat";
 
     private static void UpdateAutoRename()
@@ -388,9 +388,9 @@ public unsafe class Game
                 currentRecordingSlot = ffxivReplay->nextReplaySaveSlot;
                 break;
             case false when currentRecordingSlot >= 0:
-                AutoRenameRecording();
+                AutoRenameReplay();
                 currentRecordingSlot = -1;
-                SetSavedRecordingCIDs(DalamudApi.ClientState.LocalContentId);
+                SetSavedReplayCIDs(DalamudApi.ClientState.LocalContentId);
                 break;
         }
     }
@@ -450,27 +450,29 @@ public unsafe class Game
         return (Structures.FFXIVReplay.ReplayFile*)ptr;
     }
 
-    public static Structures.FFXIVReplay.Header? ReadReplayHeader(string path)
+    public static Structures.FFXIVReplay.ReplayFile? ReadReplayHeaderAndChapters(string path)
     {
         try
         {
             using var fs = File.OpenRead(path);
-            var size = sizeof(Structures.FFXIVReplay.Header);
+            var size = sizeof(Structures.FFXIVReplay.Header) + sizeof(Structures.FFXIVReplay.ChapterArray);
             var bytes = new byte[size];
             if (fs.Read(bytes, 0, size) != size)
                 return null;
             fixed (byte* ptr = &bytes[0])
-                return *(Structures.FFXIVReplay.Header*)ptr;
+                return *(Structures.FFXIVReplay.ReplayFile*)ptr;
         }
         catch (Exception e)
         {
-            PluginLog.Error($"Failed to read replay header {path}\n{e}");
+            PluginLog.Error($"Failed to read replay header and chapters {path}\n{e}");
             return null;
         }
     }
 
     public static void FixNextReplaySaveSlot()
     {
+        if (ARealmRecorded.Config.MaxAutoRenamedReplays <= 0 && !ffxivReplay->savedReplayHeaders[ffxivReplay->nextReplaySaveSlot].IsLocked) return;
+
         for (byte i = 0; i < 3; i++)
         {
             if (i != 2)
@@ -484,12 +486,23 @@ public unsafe class Game
         }
     }
 
-    public static byte FindNextChapterType(byte startChapter, byte type)
+    public static byte FindPreviousChapterType(byte chapter, byte type)
     {
-        for (byte i = (byte)(startChapter + 1); i < ffxivReplay->chapters.length; i++)
+        for (byte i = chapter; i > 0; i--)
             if (ffxivReplay->chapters[i]->type == type) return i;
         return 0;
     }
+
+    public static byte FindPreviousChapterType(byte type) => FindPreviousChapterType(GetCurrentChapter(), type);
+
+    public static byte FindNextChapterType(byte chapter, byte type)
+    {
+        for (byte i = (byte)(chapter + 1); i < ffxivReplay->chapters.length; i++)
+            if (ffxivReplay->chapters[i]->type == type) return i;
+        return 0;
+    }
+
+    public static byte FindNextChapterType(byte type) => FindNextChapterType(GetCurrentChapter(), type);
 
     public static byte GetPreviousStartChapter(byte chapter)
     {
@@ -505,12 +518,16 @@ public unsafe class Game
         return 0;
     }
 
+    public static byte GetPreviousStartChapter() => GetPreviousStartChapter(GetCurrentChapter());
+
     public static byte FindPreviousChapterFromTime(uint ms)
     {
         for (byte i = (byte)(ffxivReplay->chapters.length - 1); i > 0; i--)
             if (ffxivReplay->chapters[i]->ms <= ms) return i;
         return 0;
     }
+
+    public static byte GetCurrentChapter() => FindPreviousChapterFromTime((uint)(ffxivReplay->seek * 1000));
 
     public static Structures.FFXIVReplay.ReplayDataSegment* FindNextDataSegment(uint ms, out uint offset)
     {
@@ -559,7 +576,10 @@ public unsafe class Game
 
         seekingOffset = offset;
         forceFastForwardReplacer.Enable();
-        SetChapter(prevChapter);
+        if (ffxivReplay->seek * 1000 < segment->ms && prevChapter == GetCurrentChapter())
+            OnSetChapterHook.Original(ffxivReplay, prevChapter);
+        else
+            SetChapter(prevChapter);
     }
 
     public static void ReplaySection(byte from, byte to)
@@ -593,20 +613,7 @@ public unsafe class Game
         ReplaySection(GetPreviousStartChapter((byte)quickLoadChapter), (byte)quickLoadChapter);
     }
 
-    public static bool EnterGroupPose()
-    {
-        var uiModule = Framework.Instance()->GetUiModule();
-        return ((delegate* unmanaged<UIModule*, byte>)uiModule->vfunc[74])(uiModule) != 0; // 48 89 5C 24 08 57 48 83 EC 20 48 8B F9 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B C8
-    }
-
-    public static bool EnterIdleCamera()
-    {
-        var uiModule = Framework.Instance()->GetUiModule();
-        var focus = DalamudApi.TargetManager.FocusTarget;
-        return ((delegate* unmanaged<UIModule*, byte, long, byte>)uiModule->vfunc[77])(uiModule, 0, focus != null ? focus.ObjectId : 0xE0000000) != 0; // 48 89 5C 24 08 57 48 83 EC 20 48 8B 01 49 8B D8 0F B6 FA
-    }
-
-    public static List<(FileInfo, Structures.FFXIVReplay.Header)> GetReplayList()
+    public static List<(FileInfo, Structures.FFXIVReplay.ReplayFile)> GetReplayList()
     {
         try
         {
@@ -614,14 +621,19 @@ public unsafe class Game
 
             var renamedDirectory = new DirectoryInfo(autoRenamedFolder);
             if (!renamedDirectory.Exists)
-                renamedDirectory.Create();
+            {
+                if (ARealmRecorded.Config.MaxAutoRenamedReplays > 0)
+                    renamedDirectory.Create();
+                else
+                    renamedDirectory = null;
+            }
 
-            var list = (from file in directory.GetFiles().Concat(renamedDirectory.GetFiles())
+            var list = (from file in directory.GetFiles().Concat(renamedDirectory?.GetFiles() ?? Array.Empty<FileInfo>())
                     where file.Extension == ".dat"
-                    let header = ReadReplayHeader(file.FullName)
-                    where header is { IsValid: true }
-                    select (file, header.Value)
-                ).OrderByDescending(t => t.Value.IsPlayable).ThenBy(t => t.file.Name).ToList();
+                    let replay = ReadReplayHeaderAndChapters(file.FullName)
+                    where replay is { header.IsValid: true }
+                    select (file, replay.Value)
+                ).ToList();
 
             replayList = list;
         }
@@ -633,7 +645,7 @@ public unsafe class Game
         return replayList;
     }
 
-    public static void RenameRecording(FileInfo file, string name)
+    public static void RenameReplay(FileInfo file, string name)
     {
         try
         {
@@ -641,12 +653,18 @@ public unsafe class Game
         }
         catch (Exception e)
         {
-            ARealmRecorded.PrintError($"Failed to rename recording\n{e}");
+            ARealmRecorded.PrintError($"Failed to rename replay\n{e}");
         }
     }
 
-    public static void AutoRenameRecording()
+    public static void AutoRenameReplay()
     {
+        if (ARealmRecorded.Config.MaxAutoRenamedReplays <= 0)
+        {
+            GetReplayList();
+            return;
+        }
+
         try
         {
             var fileName = GetReplaySlotName(currentRecordingSlot);
@@ -656,42 +674,111 @@ public unsafe class Game
             file.MoveTo(Path.Combine(autoRenamedFolder, $"{name}.dat"));
 
             var renamedFiles = new DirectoryInfo(autoRenamedFolder).GetFiles().Where(f => f.Extension == ".dat").ToList();
-            if (renamedFiles.Count > 30)
-                renamedFiles.OrderBy(f => f.CreationTime).First().Delete();
+            while (renamedFiles.Count > ARealmRecorded.Config.MaxAutoRenamedReplays)
+            {
+                DeleteReplay(renamedFiles.OrderBy(f => f.CreationTime).First());
+                renamedFiles = new DirectoryInfo(autoRenamedFolder).GetFiles().Where(f => f.Extension == ".dat").ToList();
+            }
 
             GetReplayList();
             ffxivReplay->savedReplayHeaders[currentRecordingSlot] = new Structures.FFXIVReplay.Header();
         }
         catch (Exception e)
         {
-            ARealmRecorded.PrintError($"Failed to rename recording\n{e}");
+            ARealmRecorded.PrintError($"Failed to rename replay\n{e}");
         }
     }
 
-    public static void DeleteRecording(FileInfo file)
+    public static void DeleteReplay(FileInfo file)
     {
         try
         {
-            var deletedDirectory = new DirectoryInfo(deletedFolder);
-            if (!deletedDirectory.Exists)
-                deletedDirectory.Create();
+            if (ARealmRecorded.Config.MaxDeletedReplays > 0)
+            {
+                var deletedDirectory = new DirectoryInfo(deletedFolder);
+                if (!deletedDirectory.Exists)
+                    deletedDirectory.Create();
 
-            file.MoveTo(Path.Combine(deletedFolder, file.Name));
+                file.MoveTo(Path.Combine(deletedFolder, file.Name), true);
 
-            var deletedFiles = deletedDirectory.GetFiles().Where(f => f.Extension == ".dat").ToList();
-            if (deletedFiles.Count > 10)
-                deletedFiles.OrderBy(f => f.CreationTime).First().Delete();
+                var deletedFiles = deletedDirectory.GetFiles().Where(f => f.Extension == ".dat").ToList();
+                while (deletedFiles.Count > ARealmRecorded.Config.MaxDeletedReplays)
+                {
+                    deletedFiles.OrderBy(f => f.CreationTime).First().Delete();
+                    deletedFiles = deletedDirectory.GetFiles().Where(f => f.Extension == ".dat").ToList();
+                }
+            }
+            else
+            {
+                file.Delete();
+            }
 
             GetReplayList();
-            ARealmRecorded.PrintEcho("Successfully moved the recording to the deleted folder!");
         }
         catch (Exception e)
         {
-            ARealmRecorded.PrintError($"Failed to delete recording\n{e}");
+            ARealmRecorded.PrintError($"Failed to delete replay\n{e}");
         }
     }
 
-    public static void SetDutyRecorderMenuSelection(IntPtr agent, byte slot)
+    public static void ArchiveReplays()
+    {
+        var archivableReplays = ReplayList.Where(t => !t.Item2.header.IsPlayable && t.Item1.Directory?.Name == "replay").ToArray();
+        if (archivableReplays.Length == 0) return;
+
+        var restoreBackup = true;
+
+        try
+        {
+            using (var zipFileStream = new FileStream(archiveZip, FileMode.OpenOrCreate))
+            using (var zipFile = new ZipArchive(zipFileStream, ZipArchiveMode.Update))
+            {
+                var expectedEntryCount = zipFile.Entries.Count;
+                if (expectedEntryCount > 0)
+                {
+                    var prevPosition = zipFileStream.Position;
+                    zipFileStream.Position = 0;
+                    using var zipBackupFileStream = new FileStream($"{archiveZip}.BACKUP", FileMode.Create);
+                    zipFileStream.CopyTo(zipBackupFileStream);
+                    zipFileStream.Position = prevPosition;
+                }
+
+                foreach (var (file, _) in archivableReplays)
+                {
+                    zipFile.CreateEntryFromFile(file.FullName, file.Name);
+                    expectedEntryCount++;
+                }
+
+                if (zipFile.Entries.Count != expectedEntryCount)
+                    throw new IOException($"Number of archived replays was unexpected (Expected: {expectedEntryCount}, Actual: {zipFile.Entries.Count}) after archiving, restoring backup!");
+            }
+
+            restoreBackup = false;
+
+            foreach (var (file, _) in archivableReplays)
+                file.Delete();
+        }
+        catch (Exception e)
+        {
+
+            if (restoreBackup)
+            {
+                try
+                {
+                    using var zipBackupFileStream = new FileStream($"{archiveZip}.BACKUP", FileMode.Open);
+                    using var zipFileStream = new FileStream(archiveZip, FileMode.Create);
+                    zipBackupFileStream.CopyTo(zipFileStream);
+                }
+                catch { }
+            }
+
+            ARealmRecorded.PrintError($"Failed to archive replays\n{e}");
+        }
+
+        GetReplayList();
+    }
+
+    public static void SetDutyRecorderMenuSelection(nint agent, byte slot)
     {
         *(byte*)(agent + 0x2C) = slot;
         *(byte*)(agent + 0x2A) = 1;
@@ -712,7 +799,7 @@ public unsafe class Game
         if (OpCodeDictionary is not null) 
             header.replayVersion = ffxivReplay->replayVersion;
 
-        lastSelectedReplay = path;
+        LastSelectedReplay = path;
         lastSelectedHeader = header;
         var prevHeader = ffxivReplay->savedReplayHeaders[0];
         ffxivReplay->savedReplayHeaders[0] = header;
@@ -721,23 +808,25 @@ public unsafe class Game
         *(byte*)(agent + 0x2C) = 100;
     }
 
-    public static void CopyRecordingIntoSlot(IntPtr agent, FileInfo file, Structures.FFXIVReplay.Header header, byte slot)
+    public static void CopyReplayIntoSlot(nint agent, FileInfo file, Structures.FFXIVReplay.Header header, byte slot)
     {
         if (slot > 2) return;
+
         try
         {
-            file.CopyTo(Path.Combine(file.DirectoryName!, GetReplaySlotName(slot)), true);
+            file.CopyTo(Path.Combine(replayFolder, GetReplaySlotName(slot)), true);
+            header.localCID = DalamudApi.ClientState.LocalContentId;
             ffxivReplay->savedReplayHeaders[slot] = header;
             SetDutyRecorderMenuSelection(agent, slot);
             GetReplayList();
         }
         catch (Exception e)
         {
-            ARealmRecorded.PrintError($"Failed to copy recording to slot {slot + 1}\n{e}");
+            ARealmRecorded.PrintError($"Failed to copy replay to slot {slot + 1}\n{e}");
         }
     }
 
-    public static void SetSavedRecordingCIDs(ulong cID)
+    public static void SetSavedReplayCIDs(ulong cID)
     {
         if (ffxivReplay->savedReplayHeaders == null) return;
 
@@ -763,17 +852,11 @@ public unsafe class Game
         catch { }
     }
 
-    public static void ToggleWaymarks()
-    {
-        if ((*waymarkToggle & 2) != 0)
-            *waymarkToggle -= 2;
-        else
-            *waymarkToggle += 2;
-    }
+    public static void ToggleWaymarks() => *waymarkToggle ^= 2;
 
     public static void SetConditionFlag(ConditionFlag flag, bool b) => *(bool*)(DalamudApi.Condition.Address + (int)flag) = b;
 
-#if DEBUG
+    [Conditional("DEBUG")]
     public static void ReadPackets(string path)
     {
         var replay = ReadReplay(path);
@@ -804,7 +887,6 @@ public unsafe class Game
             PluginLog.Information($"[{opcode:X}] {count} ({opcodeLengths[opcode]})");
         PluginLog.Information("-------------------");
     }
-#endif
 
     // 48 89 5C 24 08 57 48 83 EC 20 33 FF 48 8B D9 89 39 48 89 79 08 ctor
     // E8 ?? ?? ?? ?? 48 8D 8B 48 0B 00 00 E8 ?? ?? ?? ?? 48 8D 8B 38 0B 00 00 dtor
@@ -836,9 +918,14 @@ public unsafe class Game
         RsfReceiveHook.Enable();
         DispatchPacketHook.Enable();
 
+        RsvReceiveHook.Enable();
+        RsfReceiveHook.Enable();
+        RecordPacketHook.Enable();
+        DispatchPacketHook.Enable();
+
         waymarkToggle += 0x48;
 
-        SetSavedRecordingCIDs(DalamudApi.ClientState.LocalContentId);
+        SetSavedReplayCIDs(DalamudApi.ClientState.LocalContentId);
 
         if (InPlayback && ffxivReplay->fileStream != IntPtr.Zero && *(long*)ffxivReplay->fileStream == 0)
             LoadReplay(ARealmRecorded.Config.LastLoadedReplay);
@@ -860,15 +947,20 @@ public unsafe class Game
         RsfReceiveHook?.Dispose();
         DispatchPacketHook?.Dispose();
 
+        RsvReceiveHook?.Dispose();
+        RsfReceiveHook?.Dispose();
+        RecordPacketHook?.Dispose();
+        DispatchPacketHook?.Dispose();
+
         if (ffxivReplay != null)
-            SetSavedRecordingCIDs(0);
+            SetSavedReplayCIDs(0);
 
         if (loadedReplay == null) return;
 
         if (InPlayback)
         {
             ffxivReplay->playbackControls |= 8; // Pause
-            ARealmRecorded.PrintError("Plugin was unloaded, playback will be broken if the plugin or recording is not reloaded.");
+            ARealmRecorded.PrintError("Plugin was unloaded, playback will be broken if the plugin or replay is not reloaded.");
         }
 
         Marshal.FreeHGlobal((IntPtr)loadedReplay);
