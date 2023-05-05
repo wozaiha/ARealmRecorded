@@ -2,7 +2,7 @@
     "Author": "UnknownX, Loskh, wozaiha, gamous",
     "Name": "A Realm Recorded+",
     "Punchline": "ARR增强版",
-    "Description": "ARR增强版,有效解决本体不显示模型的头疼问题.",
+    "Description": "ARR增强版,玄学性解决跨版本录像播放（跨版本有可能造成游戏崩溃）.",
     "IconUrl": "",
     "ImageUrls": [
         ""
@@ -11,6 +11,5 @@
     "CategoryTags": [
         "utility"
     ],
-    "InternalName": "ARealmRecorded+",
-    "AssemblyVersion": "9.9.9.9",
+    "InternalName": "ARealmRecorded+"
 }
