@@ -61,7 +61,7 @@ public unsafe class Game
     //private static readonly Memory.Replacer hideSelfNameReplacer2 = new("0F 85 ?? ?? ?? ?? 48 ?? ?? ?? ?? E8 ?? ?? ?? ?? F6 05", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
 
     // mov rcx, r14 -> xor rcx, rcx
-    public static readonly Memory.Replacer replaceLocalPlayerNameReplacer = new(DalamudApi.SigScanner.ScanModule("F6 05 ?? ?? ?? ?? 04 74 ?? 45 33 C0 33 D2 49 8B CE") + 14, new byte[] { 0x48, 0x31, 0xC9 }, ARealmRecorded.Config.EnableHideOwnName);
+    public static readonly Memory.Replacer replaceLocalPlayerNameReplacer = new(DalamudApi.SigScanner.ScanModule("F6 05 ?? ?? ?? ?? 04 74 ?? 45 33 C0 33 D2 49 8B CE E8 ?? ?? ?? ?? 84 C0 75 ??") + 24, new byte[] { 0x90, 0x90 }, ARealmRecorded.Config.EnableHideOwnName);
 
     [Signature("48 8D 0D ?? ?? ?? ?? 88 44 24 24", ScanType = ScanType.StaticAddress)]
     public static Structures.FFXIVReplay* ffxivReplay;
