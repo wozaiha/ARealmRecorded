@@ -52,7 +52,7 @@ public unsafe class Game
 
     public static Dictionary<ushort, ushort> OpCodeDictionary = null;
 
-    private static readonly Memory.Replacer alwaysRecordReplacer = new("24 06 3C 02 75 08 48 8B CB E8", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
+    private static readonly Memory.Replacer alwaysRecordReplacer = new("A8 04 75 27 A8 02 74 23 48 8B", new byte[] { 0xEB, 0x21 }, true); // 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
     private static readonly Memory.Replacer removeRecordReadyToastReplacer = new("BA CB 07 00 00 48 8B CF E8", new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, true);
     private static readonly Memory.Replacer removeProcessingLimitReplacer = new("41 FF C6 E8 ?? ?? ?? ?? 48 8B F8 48 85 C0 0F 84", new byte[] { 0x90, 0x90, 0x90 }, true);
     private static readonly Memory.Replacer removeProcessingLimitReplacer2 = new("77 57 48 8B 0D ?? ?? ?? ?? 33 C0", new byte[] { 0x90, 0x90 }, true);
@@ -98,8 +98,8 @@ public unsafe class Game
     private static byte SetChapter(byte chapter) => setChapter(ffxivReplay, chapter);
 
     [Signature("48 89 5C 24 10 57 48 81 EC 70 04 00 00")]
-    private static delegate* unmanaged<IntPtr, void> displaySelectedDutyRecording;
-    public static void DisplaySelectedDutyRecording(IntPtr agent) => displaySelectedDutyRecording(agent);
+    private static delegate* unmanaged<nint, void> displaySelectedDutyRecording;
+    public static void DisplaySelectedDutyRecording(nint agent) => displaySelectedDutyRecording(agent);
 
     private delegate void InitializeRecordingDelegate(Structures.FFXIVReplay* ffxivReplay);
     [Signature("40 55 57 48 8D 6C 24 B1 48 81 EC 98 00 00 00", DetourName = "InitializeRecordingDetour")]
@@ -248,13 +248,13 @@ public unsafe class Game
     private delegate byte DisplayRecordingOnDTRBarDelegate(nint agent);
     [Signature("E8 ?? ?? ?? ?? 44 0F B6 C0 BA 4F 00 00 00", DetourName = "DisplayRecordingOnDTRBarDetour")]
     private static Hook<DisplayRecordingOnDTRBarDelegate> DisplayRecordingOnDTRBarHook;
-    private static byte DisplayRecordingOnDTRBarDetour(IntPtr agent) => (byte)(DisplayRecordingOnDTRBarHook.Original(agent) != 0
+    private static byte DisplayRecordingOnDTRBarDetour(nint agent) => (byte)(DisplayRecordingOnDTRBarHook.Original(agent) != 0
         || ARealmRecorded.Config.EnableRecordingIcon && IsRecording && DalamudApi.PluginInterface.UiBuilder.ShouldModifyUi ? 1 : 0);
 
-    private delegate void ContentDirectorTimerUpdateDelegate(IntPtr contentDirector);
+    private delegate void ContentDirectorTimerUpdateDelegate(nint contentDirector);
     [Signature("40 53 48 83 EC 20 0F B6 81 ?? ?? ?? ?? 48 8B D9 A8 04 0F 84 ?? ?? ?? ?? A8 08", DetourName = "ContentDirectorTimerUpdateDetour")]
     private static Hook<ContentDirectorTimerUpdateDelegate> ContentDirectorTimerUpdateHook;
-    private static void ContentDirectorTimerUpdateDetour(IntPtr contentDirector)
+    private static void ContentDirectorTimerUpdateDetour(nint contentDirector)
     {
         if ((*(byte*)(contentDirector + contentDirectorOffset) & 12) == 12)
         {
@@ -265,15 +265,15 @@ public unsafe class Game
         ContentDirectorTimerUpdateHook.Original(contentDirector);
     }
 
-    private delegate IntPtr EventBeginDelegate(IntPtr a1, IntPtr a2);
+    private delegate nint EventBeginDelegate(nint a1, nint a2);
     [Signature("40 55 53 57 41 55 41 57 48 8D 6C 24 C9")]
     private static Hook<EventBeginDelegate> EventBeginHook;
-    private static IntPtr EventBeginDetour(IntPtr a1, IntPtr a2) => !InPlayback || ConfigModule.Instance()->GetIntValue(ConfigOption.CutsceneSkipIsContents) == 0 ? EventBeginHook.Original(a1, a2) : IntPtr.Zero;
+    private static nint EventBeginDetour(nint a1, nint a2) => !InPlayback || ConfigModule.Instance()->GetIntValue(ConfigOption.CutsceneSkipIsContents) == 0 ? EventBeginHook.Original(a1, a2) : nint.Zero;
 
-    public unsafe delegate uint RecordPacketDelegate(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length);
+    public unsafe delegate uint RecordPacketDelegate(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, nint data, ulong length);
     [Signature("E8 ?? ?? ?? ?? 84 C0 74 60 33 C0", DetourName = nameof(RecordPacketDetour))]
     private static Hook<RecordPacketDelegate> RecordPacketHook;
-    private static uint RecordPacketDetour(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, IntPtr data, ulong length) {
+    private static uint RecordPacketDetour(Structures.FFXIVReplay* replayModule, uint targetId, ushort opcode, nint data, ulong length) {
         //Remove player's names here
         //PluginLog.Debug($"Received:0x{opcode:X},Length:{length}");
         switch (opcode) {
@@ -393,7 +393,7 @@ public unsafe class Game
         if (newReplay == null) return false;
 
         if (loadedReplay != null)
-            Marshal.FreeHGlobal((IntPtr)loadedReplay);
+            Marshal.FreeHGlobal((nint)loadedReplay);
 
         loadedReplay = newReplay;
         ffxivReplay->replayHeader = loadedReplay->header;
@@ -407,14 +407,14 @@ public unsafe class Game
     public static bool UnloadReplay()
     {
         if (loadedReplay == null) return false;
-        Marshal.FreeHGlobal((IntPtr)loadedReplay);
+        Marshal.FreeHGlobal((nint)loadedReplay);
         loadedReplay = null;
         return true;
     }
 
     public static Structures.FFXIVReplay.ReplayFile* ReadReplay(string path)
     {
-        var ptr = IntPtr.Zero;
+        var ptr = nint.Zero;
         var allocated = false;
 
         try
@@ -433,7 +433,7 @@ public unsafe class Game
             if (allocated)
             {
                 Marshal.FreeHGlobal(ptr);
-                ptr = IntPtr.Zero;
+                ptr = nint.Zero;
             }
         }
 
@@ -775,7 +775,7 @@ public unsafe class Game
         DisplaySelectedDutyRecording(agent);
     }
 
-    public static void SetDutyRecorderMenuSelection(IntPtr agent, string path, Structures.FFXIVReplay.Header header)
+    public static void SetDutyRecorderMenuSelection(nint agent, string path, Structures.FFXIVReplay.Header header)
     {
         header.localCID = DalamudApi.ClientState.LocalContentId;
 
@@ -869,7 +869,7 @@ public unsafe class Game
             ++totalPackets;
         }
 
-        Marshal.FreeHGlobal((IntPtr)replay);
+        Marshal.FreeHGlobal((nint)replay);
 
         PluginLog.Information("-------------------");
         PluginLog.Information($"Opcodes inside: {path} (Total: [{opcodeCount.Count}] {totalPackets})");
@@ -917,7 +917,7 @@ public unsafe class Game
 
         SetSavedReplayCIDs(DalamudApi.ClientState.LocalContentId);
 
-        if (InPlayback && ffxivReplay->fileStream != IntPtr.Zero && *(long*)ffxivReplay->fileStream == 0)
+        if (InPlayback && ffxivReplay->fileStream != nint.Zero && *(long*)ffxivReplay->fileStream == 0)
             LoadReplay(ARealmRecorded.Config.LastLoadedReplay);
     }
 
@@ -953,7 +953,7 @@ public unsafe class Game
             ARealmRecorded.PrintError("Plugin was unloaded, playback will be broken if the plugin or replay is not reloaded.");
         }
 
-        Marshal.FreeHGlobal((IntPtr)loadedReplay);
+        Marshal.FreeHGlobal((nint)loadedReplay);
         loadedReplay = null;
     }
 }
