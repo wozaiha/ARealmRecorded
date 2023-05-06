@@ -240,7 +240,7 @@ public unsafe class Game
     private static byte ExecuteCommandDetour(uint clientTrigger, int param1, int param2, int param3, int param4)
     {
         if (!InPlayback || clientTrigger is 201 or 1981) return ExecuteCommandHook.Original(clientTrigger, param1, param2, param3, param4); // Block GPose and Idle Camera from sending packets
-        if (clientTrigger == 315) // Mimic GPose and Idle Camera ConditionFlag for plugin compatibility
+        if (clientTrigger == 314) // Mimic GPose and Idle Camera ConditionFlag for plugin compatibility
             SetConditionFlag(ConditionFlag.WatchingCutscene, param1 != 0);
         return 0;
     }
