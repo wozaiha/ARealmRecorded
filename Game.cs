@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Config;
@@ -215,7 +216,7 @@ public static unsafe class Game
             nextChapterMS = Common.ContentsReplayModule->replayHeader.totalMS;
 
         var timespan = new TimeSpan(0, 0, 0, 0, (int)(nextChapterMS - currentChapterMS));
-        (ret + ret.ReadCString().Length).WriteCString($" ({(int)timespan.TotalMinutes:D2}:{timespan.Seconds:D2})");
+        (ret + Encoding.UTF8.GetByteCount(ret.ReadCString())).WriteCString($" ({(int)timespan.TotalMinutes:D2}:{timespan.Seconds:D2})");
 
         return ret;
     }
