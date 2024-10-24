@@ -1,4 +1,6 @@
-﻿using Dalamud.Configuration;
+﻿using System.Collections.Generic;
+using Dalamud.Configuration;
+using Hypostasis.Game.Structures;
 
 namespace ARealmRecorded;
 
@@ -16,4 +18,6 @@ public class Configuration : PluginConfiguration, IPluginConfiguration
     public float MaxSeekDelta = 100;
     public float CustomSpeedPreset = 30;
     public bool EnableWaymarks = true;
+    public bool SaveSpecificContentType = false;
+    public Dictionary<ContentType, bool> ContentType = new ();
 }

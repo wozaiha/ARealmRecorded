@@ -7,6 +7,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Utility;
 using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using Hypostasis.Game.Structures;
 using ImGuiNET;
 
 namespace ARealmRecorded;
@@ -289,6 +290,24 @@ public static unsafe class ReplayListUI
 
         save |= ImGui.InputInt("Max Deleted Replays", ref ARealmRecorded.Config.MaxDeletedReplays);
         ImGuiEx.SetItemTooltip("Max number of replays to keep in the deleted folder.");
+
+        ImGui.Separator();
+
+        save = ImGui.Checkbox("仅保存特定类型任务录像", ref ARealmRecorded.Config.SaveSpecificContentType);
+        if (ARealmRecorded.Config.SaveSpecificContentType)
+        {
+            foreach (ContentType item in Enum.GetValues(typeof(ContentType)))
+            {
+                ARealmRecorded.Config.ContentType.TryGetValue(item, out var selected);
+                if (ImGui.Checkbox($"{item}##ContentType", ref selected))
+                {
+                    ARealmRecorded.Config.ContentType[item] = selected;
+                    save = true;
+                }
+                ImGui.SameLine();
+            }
+            ImGui.NewLine();
+        }
 
         if (save)
             ARealmRecorded.Config.Save();

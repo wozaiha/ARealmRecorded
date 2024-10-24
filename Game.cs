@@ -206,6 +206,7 @@ public static unsafe class Game
     {
         var ret = FormatAddonTextTimestampHook.Original(raptureTextModule, addonSheetRow, a3, hours, minutes, seconds, a7);
         if (addonSheetRow != 3079 || !DalamudApi.PluginInterface.UiBuilder.ShouldModifyUi) return ret;
+        if (a3 > 63) return ret;
 
         // In this context, a3 is the chapter index + 1, while a7 determines the chapter type name
         var currentChapterMS = Common.ContentsReplayModule->chapters[a3 - 1]->ms;
@@ -344,6 +345,15 @@ public static unsafe class Game
 
             var name = $"{bannedFileCharacters.Replace(Common.ContentsReplayModule->contentTitle.ToString(), string.Empty)} {DateTime.Now:yyyy.MM.dd HH.mm.ss}";
             file.MoveTo(Path.Combine(autoRenamedFolder, $"{name}.dat"));
+
+            if (ARealmRecorded.Config.SaveSpecificContentType)
+            {
+                ContentType type = (ContentType)(replay.header.ContentFinderCondition.ContentType.Value?.RowId ?? 0);
+                if (ARealmRecorded.Config.ContentType.TryGetValue(type, out var save))
+                {
+                    if (!save) file.Delete();
+                }
+            }
 
             var renamedFiles = new DirectoryInfo(autoRenamedFolder).GetFiles().Where(f => f.Extension == ".dat").ToList();
             while (renamedFiles.Count > ARealmRecorded.Config.MaxAutoRenamedReplays)
