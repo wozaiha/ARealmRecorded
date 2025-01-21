@@ -350,10 +350,8 @@ public static unsafe class Game
             if (ARealmRecorded.Config.SaveSpecificContentType)
             {
                 ContentType type = (ContentType)(replay.header.ContentFinderCondition.ContentType.Value?.RowId ?? 0);
-                if (ARealmRecorded.Config.ContentType.TryGetValue(type, out var save))
-                {
-                    if (!save) file.Delete();
-                }
+                ARealmRecorded.Config.ContentType.TryGetValue(type, out var save);
+                if (!save) file.Delete();
             }
 
             var renamedFiles = new DirectoryInfo(autoRenamedFolder).GetFiles().Where(f => f.Extension == ".dat").ToList();
