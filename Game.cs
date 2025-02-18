@@ -37,11 +37,11 @@ public static unsafe class Game
 
     private static bool wasRecording = false;
 
-    private static readonly HashSet<uint> whitelistedContentTypes = [ 1, 2, 3, 4, 5, 9, 28, 29, 30 ]; // 22 Event, 26 Eureka, 27 Carnivale
+    private static readonly HashSet<uint> whitelistedContentTypes = [ 1, 2, 3, 4, 5, 9, 28, 29, 30, 37 ]; // 22 Event, 26 Eureka, 27 Carnivale
 
     private static readonly AsmPatch alwaysRecordPatch = new("24 06 3C 02 75 23 48", [ 0xEB, 0x1F ], true);
     private static readonly AsmPatch removeRecordReadyToastPatch = new("BA CB 07 00 00 48 8B CF E8", [ 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 ], true);
-    private static readonly AsmPatch seIsABunchOfClownsPatch = new("F6 40 78 01 74 04 B0 01 EB 02 32 C0 40 84 FF", [ 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 ], true);
+    private static readonly AsmPatch seIsABunchOfClownsPatch = new("F6 40 78 02 74 04 B0 01 EB 02 32 C0 40 84 FF", [ 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 ], true);
     private static readonly AsmPatch instantFadeOutPatch = new("44 8D 47 0A 33 D2", [ null, null, 0x07, 0x90 ], true); // lea r8d, [rdi+0A] -> lea r8d, [rdi]
     private static readonly AsmPatch instantFadeInPatch = new("44 8D 42 0A 41 FF 92 ?? ?? 00 00 48 8B 5C 24", [ null, null, null, 0x01 ], true); // lea r8d, [rdx+0A] -> lea r8d, [rdx+01]
     public static readonly AsmPatch replaceLocalPlayerNamePatch = new("75 ?? 48 8D 4C 24 ?? E8 ?? ?? ?? ?? F6 05", [ 0x90, 0x90 ], ARealmRecorded.Config.EnableHideOwnName);
@@ -76,10 +76,10 @@ public static unsafe class Game
         var id = contentsReplayModule->initZonePacket.contentFinderCondition;
         if (id == 0) return;
 
-        var contentFinderCondition = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.GeneratedSheets.ContentFinderCondition>()?.GetRow(id);
+        var contentFinderCondition = DalamudApi.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ContentFinderCondition>().GetRowOrDefault(id);
         if (contentFinderCondition == null) return;
 
-        var contentType = contentFinderCondition.ContentType.Row;
+        var contentType = contentFinderCondition.Value.ContentType.RowId;
         if (!whitelistedContentTypes.Contains(contentType)) return;
 
         contentsReplayModule->FixNextReplaySaveSlot();
@@ -162,7 +162,7 @@ public static unsafe class Game
     }
 
     private delegate Bool ExecuteCommandDelegate(uint clientTrigger, int param1, int param2, int param3, int param4);
-    [HypostasisSignatureInjection("E8 ?? ?? ?? ?? 8D 43 0A")]
+    [HypostasisSignatureInjection("E8 ?? ?? ?? ?? 8D 46 0A")]
     private static Hook<ExecuteCommandDelegate> ExecuteCommandHook;
     private static Bool ExecuteCommandDetour(uint clientTrigger, int param1, int param2, int param3, int param4)
     {
@@ -206,17 +206,24 @@ public static unsafe class Game
     private static nint FormatAddonTextTimestampDetour(nint raptureTextModule, uint addonSheetRow, int a3, uint hours, uint minutes, uint seconds, uint a7)
     {
         var ret = FormatAddonTextTimestampHook.Original(raptureTextModule, addonSheetRow, a3, hours, minutes, seconds, a7);
-        if (addonSheetRow != 3079 || !DalamudApi.PluginInterface.UiBuilder.ShouldModifyUi) return ret;
-        if (a3 > 63) return ret;
 
-        // In this context, a3 is the chapter index + 1, while a7 determines the chapter type name
-        var currentChapterMS = Common.ContentsReplayModule->chapters[a3 - 1]->ms;
-        var nextChapterMS = Common.ContentsReplayModule->chapters[a3]->ms;
-        if (nextChapterMS < currentChapterMS)
-            nextChapterMS = Common.ContentsReplayModule->replayHeader.totalMS;
+        try
+        {
+            if (a3 > 64 || addonSheetRow != 3079 || !DalamudApi.PluginInterface.UiBuilder.ShouldModifyUi) return ret;
 
-        var timespan = new TimeSpan(0, 0, 0, 0, (int)(nextChapterMS - currentChapterMS));
-        (ret + Encoding.UTF8.GetByteCount(ret.ReadCString())).WriteCString($" ({(int)timespan.TotalMinutes:D2}:{timespan.Seconds:D2})");
+            // In this context, a3 is the chapter index + 1, while a7 determines the chapter type name
+            var currentChapterMS = Common.ContentsReplayModule->chapters[a3 - 1]->ms;
+            var nextChapterMS = a3 < 64 ? Common.ContentsReplayModule->chapters[a3]->ms : Common.ContentsReplayModule->replayHeader.totalMS;
+            if (nextChapterMS < currentChapterMS)
+                nextChapterMS = Common.ContentsReplayModule->replayHeader.totalMS;
+
+            var timespan = new TimeSpan(0, 0, 0, 0, (int)(nextChapterMS - currentChapterMS));
+            (ret + ret.ReadCString().Length).WriteCString($" ({(int)timespan.TotalMinutes:D2}:{timespan.Seconds:D2})");
+        }
+        catch (Exception e)
+        {
+            DalamudApi.LogError(e.ToString());
+        }
 
         return ret;
     }
@@ -342,7 +349,7 @@ public static unsafe class Game
 
         try
         {
-            var (file, replay) = GetReplayList().MaxBy(t => t.Item1.CreationTime);
+            var (file, replay) = GetReplayList().Where(t => t.Item1.Name.StartsWith("FFXIV_")).MaxBy(t => t.Item1.LastWriteTime);
 
             var name = $"{bannedFileCharacters.Replace(Common.ContentsReplayModule->contentTitle.ToString(), string.Empty)} {DateTime.Now:yyyy.MM.dd HH.mm.ss}";
             file.MoveTo(Path.Combine(autoRenamedFolder, $"{name}.dat"));
