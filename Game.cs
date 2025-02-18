@@ -356,7 +356,7 @@ public static unsafe class Game
 
             if (ARealmRecorded.Config.SaveSpecificContentType)
             {
-                ContentType type = (ContentType)(replay.header.ContentFinderCondition.ContentType.Value?.RowId ?? 0);
+                ContentType type = (ContentType)(replay.header.ContentFinderCondition.ContentType.ValueNullable?.RowId ?? 0);
                 ARealmRecorded.Config.ContentType.TryGetValue(type, out var save);
                 if (!save) file.Delete();
             }
