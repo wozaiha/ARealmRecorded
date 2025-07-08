@@ -7,11 +7,14 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.Config;
 using Dalamud.Hooking;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using Hypostasis.Game.Structures;
 
 namespace ARealmRecorded;
@@ -589,6 +592,23 @@ public static unsafe class Game
 
         if (Common.ContentsReplayModule->InPlayback && Common.ContentsReplayModule->fileStream != nint.Zero && *(long*)Common.ContentsReplayModule->fileStream == 0)
             ReplayManager.LoadReplay(ARealmRecorded.Config.LastLoadedReplay);
+
+        DalamudApi.AddonLifecycle.RegisterListener(AddonEvent.PostRequestedUpdate, "_PartyList", Handler);
+    }
+
+    private static void Handler(AddonEvent type, AddonArgs args)
+    {
+        if (!DalamudApi.Condition[ConditionFlag.DutyRecorderPlayback]) return;
+        var addon = (AddonPartyList*)DalamudApi.GameGui.GetAddonByName("_PartyList");
+        var height = 28 * 40;
+        for (uint i = 11; i < 18; i++)
+        {
+            var node = addon->GetNodeById(i);
+            height -= (int)node->Y;
+        }
+
+        var mainNode = addon->GetNodeById(10u);
+        mainNode->SetPositionShort(0, (short)height);
     }
 
     public static void Dispose()
@@ -598,6 +618,9 @@ public static unsafe class Game
 
         if (Common.ContentsReplayModule != null)
             Common.ContentsReplayModule->SetSavedReplayCIDs(0);
+
+        DalamudApi.AddonLifecycle.UnregisterListener(AddonEvent.PostRequestedUpdate
+            , "_PartyList", Handler);
 
         ReplayManager.Dispose();
     }

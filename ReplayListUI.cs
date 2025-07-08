@@ -296,17 +296,22 @@ public static unsafe class ReplayListUI
         save = ImGui.Checkbox("仅保存特定类型任务录像", ref ARealmRecorded.Config.SaveSpecificContentType);
         if (ARealmRecorded.Config.SaveSpecificContentType)
         {
-            foreach (ContentType item in Enum.GetValues(typeof(ContentType)))
+            if (ImGui.BeginChild("##SaveSpecificContentType", Vector2.Zero, true))
             {
-                ARealmRecorded.Config.ContentType.TryGetValue(item, out var selected);
-                if (ImGui.Checkbox($"{item}##ContentType", ref selected))
+                var i = 0;
+                foreach (ContentType item in Enum.GetValues(typeof(ContentType)))
                 {
-                    ARealmRecorded.Config.ContentType[item] = selected;
-                    save = true;
+                    i++;
+                    ARealmRecorded.Config.ContentType.TryGetValue(item, out var selected);
+                    if (ImGui.Checkbox($"{item}##ContentType", ref selected))
+                    {
+                        ARealmRecorded.Config.ContentType[item] = selected;
+                        save = true;
+                    }
+                    if (i % 3 != 0) ImGui.SameLine();
                 }
-                ImGui.SameLine();
+                ImGui.NewLine();
             }
-            ImGui.NewLine();
         }
 
         if (save)
