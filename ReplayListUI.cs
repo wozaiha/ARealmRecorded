@@ -8,6 +8,7 @@ using Dalamud.Interface.Utility;
 using Dalamud.Utility;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Dalamud.Bindings.ImGui;
+using Hypostasis.Game.Structures;
 
 namespace ARealmRecorded;
 

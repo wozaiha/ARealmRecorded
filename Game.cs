@@ -599,7 +599,7 @@ public static unsafe class Game
     private static void Handler(AddonEvent type, AddonArgs args)
     {
         if (!DalamudApi.Condition[ConditionFlag.DutyRecorderPlayback]) return;
-        var addon = (AddonPartyList*)DalamudApi.GameGui.GetAddonByName("_PartyList");
+        var addon = (AddonPartyList*)DalamudApi.GameGui.GetAddonByName("_PartyList").Address;
         var height = 28 * 40;
         for (uint i = 11; i < 18; i++)
         {
